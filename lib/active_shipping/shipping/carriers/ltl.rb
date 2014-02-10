@@ -2,7 +2,7 @@
 
 module ActiveMerchant
   module Shipping
-    class Ltl < Carrier
+    class LTL < Carrier
       self.retry_safe = true
 
       cattr_accessor :default_options
