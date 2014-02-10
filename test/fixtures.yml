@@ -39,3 +39,14 @@ canada_post_pws:
   platform_id: 12345678
   api_key: 1234789
   secret: 1245743
+small_parcel:
+  loginId: login
+  password: pass
+  licenseKey: licenseKey
+  accountNumber: accountNumber
+ltl:
+  loginId: login
+  password: pass
+  licenseKey: licenseKey
+  accountNumber: accountNumber
+
