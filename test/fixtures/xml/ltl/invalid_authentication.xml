@@ -1,0 +1,13 @@
+<quoteSpeedFreightShipmentResponse xmlns="http://www.wwexship.com">
+  <quoteSpeedFreightShipmentReturn>
+    <responseStatusCode>0</responseStatusCode>
+    <responseStatusDescription>Failed</responseStatusDescription>
+    <errorDescriptions>
+      <freightShipmentErrorDescription>
+        <errorDescription>Invalid authentication info</errorDescription>
+      </freightShipmentErrorDescription>
+    </errorDescriptions>
+    <shipmentNotifications xsi:nil="true"/>
+    <freightShipmentQuoteResults xsi:nil="true"/>
+  </quoteSpeedFreightShipmentReturn>
+</quoteSpeedFreightShipmentResponse>
