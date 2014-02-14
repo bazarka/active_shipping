@@ -369,6 +369,9 @@ module ActiveMerchant
         xml = REXML::Document.new(response)
         success = response_success?(xml)
         message = response_message(xml)
+        puts "+++++++++"
+        puts  message
+        puts "+++++++++"
         response = {}
         if success
           xml.elements['//freightShipmentProNumberResults'].each do |f|
@@ -454,7 +457,12 @@ module ActiveMerchant
       end
 
       def response_message(xml)
-        xml.elements['//errorDescription | //ResponseStatusDescription']
+        if xml.elements['//responseStatusCode'].text == '1'
+          return xml.elements['//responseStatusDescription'].text
+        else
+          return xml.elements['//errorDescription'].text
+        end
+
       end
 
       def commit(action, request, test = false)

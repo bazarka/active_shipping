@@ -107,8 +107,6 @@ module ActiveMerchant
       end
 
       def find_rates(origin, destination, packages, options={})
-
-
         origin, destination = upsified_location(origin), upsified_location(destination)
         options = @options.merge(options)
         packages = Array(packages)
@@ -124,6 +122,12 @@ module ActiveMerchant
         tracking_request = build_tracking_request(tracking_number, options)
         response = commit(:track, save_request(access_request + tracking_request), (options[:test] || false))
         parse_tracking_response(response, options)
+      end
+
+      def book_shipment(origin, destination, rates_response, options)
+        main = create_xml(origin,destination,rates_response , options)
+
+
       end
 
       protected
@@ -255,6 +259,30 @@ module ActiveMerchant
           end
       end
 
+      def build_location_node(location, xml)
+
+        xml << XmlNode.new('xsd:postalCode', location.postal_code)
+        xml << XmlNode.new('xsd:city', location.city)
+        xml << XmlNode.new('xsd:state', location.state)
+        xml << XmlNode.new('xsd:countryCode', location.country_code)
+        xml << XmlNode.new('xsd:residentailIndicator', location.residential_indicator)
+      end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
       def build_tracking_request(tracking_number, options={})
         xml_request = XmlNode.new('TrackRequest') do |root_node|
           root_node << XmlNode.new('Request') do |request|
@@ -266,14 +294,7 @@ module ActiveMerchant
         xml_request.to_s
       end
 
-      def build_location_node(location, xml)
 
-        xml << XmlNode.new('xsd:postalCode', location.postal_code)
-        xml << XmlNode.new('xsd:city', location.city)
-        xml << XmlNode.new('xsd:state', location.state)
-        xml << XmlNode.new('xsd:countryCode', location.country_code)
-        xml << XmlNode.new('xsd:residentailIndicator', location.residential_indicator)
-      end
 
 
       def add_insured_node(*args)
