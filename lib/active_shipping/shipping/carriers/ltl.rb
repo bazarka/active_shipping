@@ -1,5 +1,4 @@
 # -*- encoding: utf-8 -*-
-
 module ActiveMerchant
   module Shipping
     class LTL < Carrier
@@ -7,10 +6,15 @@ module ActiveMerchant
 
       cattr_accessor :default_options
       cattr_reader :name
-      @@name = "UPS"
+      @@name = "LTL"
 
-      TEST_URL = 'https://wwwcie.ups.com'
-      LIVE_URL = 'https://onlinetools.ups.com'
+      TEST_URL = "http://www.wwexship.com"
+      LIVE_URL = "http://www.wwexship.com/webServices/services/SpeedFreightShipment"
+
+      RESOURCES = {
+          :rates => 'ups.app/xml/Rate',
+          :track => 'ups.app/xml/Track'
+      }
 
 
       LIMITED_ACCESS_TYPE = {
@@ -54,21 +58,77 @@ module ActiveMerchant
       # packages << package1
       # w = ActiveMerchant::Shipping::Ltl.new(loginId: '2324435', password: 'dufekl', licenseKey: 'eojewgjwewg', accountNumber: '345')
       # w.find_rates(origin, destination, packages, {dupa: 'dupa'})
+
+      def void_shipment(bol_numbers)
+        header = XmlNode.new('soapenv:Header')
+        body = XmlNode.new('soapenv:Body')
+        main = XmlNode.new('soapenv:Envelope', {"xmlns:soapenv" => "http://schemas.xmlsoap.org/soap/envelope/", "xmlns:wwex" => "http://www.wwexship.com"}) do |main_env|
+          main_env << header
+          main_env << body
+        end
+        build_access_request(header)
+        create_body_void_request(bol_numbers, body)
+        response = commit(:rates, save_request(main.to_s))
+        parse_void_response(response)
+      end
+
+      def pro_number(bol_numbers)
+        header = XmlNode.new('soapenv:Header')
+        body = XmlNode.new('soapenv:Body')
+        main = XmlNode.new('soapenv:Envelope', {"xmlns:soapenv" => "http://schemas.xmlsoap.org/soap/envelope/", "xmlns:wwex" => "http://www.wwexship.com"}) do |main_env|
+          main_env << header
+          main_env << body
+        end
+        build_access_request(header)
+        create_body_pro_number_request(bol_numbers, body)
+        response= commit(:rates, save_request(main.to_s))
+        parse_pro_number_response(response)
+      end
+
+      def book_shipment(origin, destination, rates_response, options)
+        header = XmlNode.new('soapenv:Header')
+        body = XmlNode.new('soapenv:Body')
+        main = XmlNode.new('soapenv:Envelope', {"xmlns:soapenv" => "http://schemas.xmlsoap.org/soap/envelope/", "xmlns:wwex" => "http://www.wwexship.com"}) do |main_env|
+          main_env << header
+          main_env << body
+        end
+        build_access_request(header)
+        create_body_book_request(origin, destination, rates_response, body, options)
+        response = commit(:rates, save_request(main.to_s))
+        parse_book_response(response)
+      end
+
       def find_rates(origin, destination, packages, options={})
-        xml_request = XmlNode.new('freightShipmentQuoteRequest')
-        origin, destination = upsified_location(origin), upsified_location(destination)
+
+        header = XmlNode.new('soapenv:Header')
+        body = XmlNode.new('soapenv:Body')
+        main = XmlNode.new('soapenv:Envelope', {"xmlns:soapenv" => "http://schemas.xmlsoap.org/soap/envelope/", "xmlns:wwex" => "http://www.wwexship.com"}) do |main_env|
+          main_env << header
+          main_env << body
+        end
+        #origin, destination = upsified_location(origin), upsified_location(destination)
         options = @options.merge(options)
         packages = Array(packages)
-        build_access_request(xml_request)
-        build_rate_request(origin, destination, packages, options, xml_request)
-        build_insurance_request(options, xml_request)
-        build_commodity_request(origin, packages, xml_request)
-        response = commit(:rates, save_request(xml_request.to_s), (options[:test] || false))
-        puts xml_request
+        create_body_request(origin, destination, packages, options, body)
+        build_access_request(header)
+        response = commit(:rates, save_request(main.to_s), (options[:test] || false))
         parse_rate_response(origin, destination, packages, response, options)
       end
 
       protected
+
+      def create_body_pro_number_request(bol_numbers, xml_request)
+        xml_request << XmlNode.new('wwex:getSpeedFreightShipmentProNumber') do |shipment_pro_number|
+          shipment_pro_number << XmlNode.new('wwex:freightShipmentProNumberRequest') do |freight_shipment|
+            freight_shipment << XmlNode.new('wwex:shipmentBOLNumbers') do |shipment_bol_nr|
+              bol_numbers.each do |bol_number|
+                shipment_bol_nr << XmlNode.new('wwex:freightShipmentBOLNumber', bol_number)
+              end
+            end
+          end
+        end
+        xml_request.to_s
+      end
 
       def upsified_location(location)
         if location.country_code == 'US' && US_TERRITORIES_TREATED_AS_COUNTRIES.include?(location.state)
@@ -82,98 +142,219 @@ module ActiveMerchant
         end
       end
 
-      def build_access_request(xml_request)
-        xml_request << XmlNode.new('loginId', @options[:loginId])
-        xml_request << XmlNode.new('Password', @options[:password])
-        xml_request << XmlNode.new('licenceKey', @options[:licenseKey])
-        xml_request << XmlNode.new('accountNumber', @options[:accountNumber])
+      def create_body_void_request(numbers, xml_request)
+        xml_request << XmlNode.new('wwex:voidSpeedFreightShipment') do |freight_shipment|
+          freight_shipment << XmlNode.new('wwex:freightShipmentVoidRequest') do |void_request|
+            void_request << XmlNode.new('wwex:shipmentBOLNumbers') do |bol_number|
+              numbers.each do |number|
+                bol_number << XmlNode.new('wwex:freightShipmentBOLNumber', number)
+              end
+            end
+          end
+        end
         xml_request.to_s
       end
 
+      def create_body_book_request(origin, destination, rates, xml_request, options)
+        xml_request << XmlNode.new('wwex:bookSpeedFreightShipment') do |book_shipment|
+          book_shipment << XmlNode.new('wwex:freightShipmentBookRequest') do |freight_shipment|
+            freight_shipment << XmlNode.new('wwex:shipmentQuoteId', rates.service_name[:shipment_quote_id])
+            freight_shipment << XmlNode.new('wwex:freightShipmentSenderDetail') do |sender_detail|
+              build_sender_address(origin, sender_detail)
+            end
+            freight_shipment << XmlNode.new('wwex:freightShipmentReceiverDetail') do |destination_detail|
+              build_destination_address(destination, destination_detail)
+            end
+            freight_shipment << XmlNode.new('wwex:shipmentDate', options['shipment_date'])
+            freight_shipment << XmlNode.new('wwex:shipmentReadyTime', options['shipment_ready_time'])
+            freight_shipment << XmlNode.new('wwex:shipmentClosingTime', options['shipment_closing_time'])
+            freight_shipment << XmlNode.new('wwex:freightShipmentCODInfo') do |cod_info|
+              build_code_info(cod_info, options)
+            end
+            freight_shipment << XmlNode.new('wwex:freightShipmentInsuranceDescription') do |insurance_description|
+              insurance_description << XmlNode.new('wwex:insuranceDescriptionOfCargo', options['insurance_description_of_cargo'])
+              insurance_description << XmlNode.new('wwex:insuranceMarksNumbers', options['insurance_marks_number'])
+            end
+            freight_shipment << XmlNode.new('wwex:shipmentReferences') do |shipment_references|
+              if options[:references].present?
+                options[:references].each do |k, v|
+                  shipment_references << XmlNode.new('wwex:freightShipmentReference') do |freight_shipment_reference|
+                    freight_shipment_reference << XmlNode.new('wwex:referenceDescription', v['reference_description'])
+                    freight_shipment_reference << XmlNode.new('wwex:referenceType', v['reference_type'])
+                    freight_shipment_reference << XmlNode.new('wwex:referencePackageNumber', v['reference_package_number'])
+                  end
+                end
+              end
+              freight_shipment << XmlNode.new('wwex:specialInstruction')
+              freight_shipment << XmlNode.new('wwex:freightShipmentAddressLabel') do |shipment_address_label|
+                shipment_address_label << XmlNode.new('wwex:printShipmentAddessLabel', options['print_shipment_address_label'])
+                shipment_address_label << XmlNode.new('wwex:numberOfShipmentAddressLabel', options['number_of_shipment_address_label'])
+              end
+            end
+          end
+        end
+        xml_request.to_s
+      end
+
+
+      def build_code_info(xml_request, options)
+        xml_request << XmlNode.new('wwex:companyName', options['code_company_name'])
+        xml_request << XmlNode.new('wwex:streetAddress', options['code_street_address'])
+        xml_request << XmlNode.new('wwex:city', options['code_city'])
+        xml_request << XmlNode.new('wwex:state', options['code_state'])
+        xml_request << XmlNode.new('wwex:zip', options['code_zip'])
+        xml_request << XmlNode.new('wwex:country', options['code_country'])
+        xml_request << XmlNode.new('wwex:formOfPayment', options['code_form_of_payment'])
+        xml_request.to_s
+      end
+
+      def build_destination_address(destination, destination_detail)
+        destination_detail << XmlNode.new('wwex:receiverCompanyName', destination.company_name)
+        destination_detail << XmlNode.new('wwex:receiverAddressLine1', destination.address1)
+        destination_detail << XmlNode.new('wwex:receiverAddressLine2', destination.address2)
+        destination_detail << XmlNode.new('wwex:receiverCity', destination.city)
+        destination_detail << XmlNode.new('wwex:receiverState', destination.state)
+        destination_detail << XmlNode.new('wwex:receiverZip', destination.zip)
+        if destination.country_code.to_s == 'US'
+          destination_detail << XmlNode.new('wwex:receiverCountryCode', 'USA')
+        else
+          destination_detail << XmlNode.new('wwex:receiverCountryCode', destination.country_code)
+        end
+        destination_detail << XmlNode.new('wwex:receiverPhone', destination.phone)
+        destination_detail << XmlNode.new('wwex:receiverContact')
+        destination_detail << XmlNode.new('wwex:emailBOLToReceiver')
+        destination_detail << XmlNode.new('wwex:receiverEmailAddess', destination.email)
+        destination_detail << XmlNode.new('wwex:billToReceiver')
+        destination_detail << XmlNode.new('wwex:receiverAccountNumber')
+        destination_detail.to_s
+      end
+
+
+      def build_sender_address(origin, sender_detail)
+        sender_detail << XmlNode.new('wwex:senderCompanyName', origin.company_name)
+        sender_detail << XmlNode.new('wwex:senderAddressLine1', origin.address1)
+        sender_detail << XmlNode.new('wwex:senderAddressLine2', origin.address2)
+        sender_detail << XmlNode.new('wwex:senderCity', origin.city)
+        sender_detail << XmlNode.new('wwex:senderState', origin.state)
+        sender_detail << XmlNode.new('wwex:senderZip', origin.zip)
+        if origin.country_code.to_s == 'US'
+          sender_detail << XmlNode.new('wwex:senderCountryCode', 'USA')
+        else
+          sender_detail << XmlNode.new('wwex:senderCountryCode', origin.country_code)
+        end
+        sender_detail << XmlNode.new('wwex:senderPhone', origin.phone)
+        sender_detail << XmlNode.new('wwex:senderContact')
+        sender_detail << XmlNode.new('wwex:emailBOLToSender')
+        sender_detail << XmlNode.new('wwex:senderEmailAddess', origin.email)
+        sender_detail.to_s
+      end
+
+
+      def create_body_request(origin, destination, packages, options, xml_request)
+        xml_request << XmlNode.new('wwex:quoteSpeedFreightShipment') do |speed_freight|
+          speed_freight << XmlNode.new('wwex:freightShipmentQuoteRequest') do |quote_request|
+            build_rate_request(origin, destination, packages, options, quote_request)
+            build_insurance_request(options, quote_request)
+            build_commodity_request(origin, packages, quote_request)
+          end
+        end
+        xml_request.to_s
+      end
+
+      def build_access_request(xml_request)
+        xml_request << XmlNode.new('wwex:AuthenticationToken') do |token|
+          token << XmlNode.new('wwex:loginId', @options[:loginId])
+          token << XmlNode.new('wwex:password', @options[:password])
+          token << XmlNode.new('wwex:licenseKey', @options[:licenseKey])
+          token << XmlNode.new('wwex:accountNumber', @options[:accountNumber])
+          xml_request.to_s
+        end
+      end
+
       def build_rate_request(origin, destination, packages, options={}, xml_request)
-        xml_request << XmlNode.new('senderCity', origin.city)
-        xml_request << XmlNode.new('senderState', origin.state)
-        xml_request << XmlNode.new('senderZip', origin.zip)
-        xml_request << XmlNode.new('senderCountryCode', origin.country)
-        xml_request << XmlNode.new('receiverCity', destination.city)
-        xml_request << XmlNode.new('receiverState', destination.state)
-        xml_request << XmlNode.new('receiverZip', destination.zip)
-        xml_request << XmlNode.new('receiverCountryCode', destination.country)
+        xml_request << XmlNode.new('wwex:senderCity', origin.city)
+        xml_request << XmlNode.new('wwex:senderState', origin.state)
+        xml_request << XmlNode.new('wwex:senderZip', origin.zip)
+        xml_request << XmlNode.new('wwex:senderCountryCode', origin.country)
+        xml_request << XmlNode.new('wwex:receiverCity', destination.city)
+        xml_request << XmlNode.new('wwex:receiverState', destination.state)
+        xml_request << XmlNode.new('wwex:receiverZip', destination.zip)
+        xml_request << XmlNode.new('wwex:receiverCountryCode', destination.country)
         #optionals
-        xml_request << XmlNode.new('insidePickup', options[:inside_pickup])
-        xml_request << XmlNode.new('insideDelivery', options[:inside_delivery])
-        xml_request << XmlNode.new('liftgatePickup', options[:lift_gate_pickup])
-        xml_request << XmlNode.new('liftgateDelivery', options[:lift_gate_delivery])
-        xml_request << XmlNode.new('residentialPickup', options[:residential_pickup])
-        xml_request << XmlNode.new('residentialDelivery', options[:residential_delivery])
-        xml_request << XmlNode.new('tradeshowPickup', options[:trade_show_pickup])
-        xml_request << XmlNode.new('tradeshowDelivery', options[:trade_show_delivery])
-        xml_request << XmlNode.new('constructionSitePickup', options[:construction_site_pickup])
-        xml_request << XmlNode.new('constructionSiteDelivery', options[:construction_site_delivery])
-        xml_request << XmlNode.new('notifyBeforeDelivery', options[:notify_before_delivery])
-        xml_request << XmlNode.new('limitedAccessPickup', options[:limited_access_pickup])
+        xml_request << XmlNode.new('wwex:insidePickup', options['inside_pickup'])
+        xml_request << XmlNode.new('wwex:insideDelivery', options['inside_delivery'])
+        xml_request << XmlNode.new('wwex:liftgatePickup', options['lift_gate_pickup'])
+        xml_request << XmlNode.new('wwex:liftgateDelivery', options['lift_gate_delivery'])
+        xml_request << XmlNode.new('wwex:residentialPickup', options['residential_pickup'])
+        xml_request << XmlNode.new('wwex:residentialDelivery', options['residential_delivery'])
+        xml_request << XmlNode.new('wwex:tradeshowPickup', options['trade_show_pickup'])
+        xml_request << XmlNode.new('wwex:tradeshowDelivery', options['trade_show_delivery'])
+        xml_request << XmlNode.new('wwex:constructionSitePickup', options['construction_site_pickup'])
+        xml_request << XmlNode.new('wwex:constructionSiteDelivery', options['construction_site_delivery'])
+        xml_request << XmlNode.new('wwex:notifyBeforeDelivery', options['notify_before_delivery'])
+        xml_request << XmlNode.new('wwex:limitedAccessPickup', options['limited_access_pickup'])
         # if limitedAccessPickup is true then limitedAccessPickupType required
-        xml_request << XmlNode.new('limitedAccessPickupType', LIMITED_ACCESS_TYPE[options[:pickup_type]])
-        xml_request << XmlNode.new('limitedAccessDelivery', options[:limited_access_delivery])
+        xml_request << XmlNode.new('wwex:limitedAccessPickupType', LIMITED_ACCESS_TYPE[options['pickup_type']])
+        xml_request << XmlNode.new('wwex:limitedAccessDelivery', options['limited_access_delivery'])
         # if limitedAccessDelivery is true then limitedAccessDeliveryType required
-        xml_request << XmlNode.new('limitedAccessDeliveryType', LIMITED_ACCESS_TYPE[options[:delivery_type]])
-        xml_request << XmlNode.new('collectOnDelivery', options[:COD_service])
-        xml_request << XmlNode.new('collectOnDeliveryAmount', options[:CPD_service_amount])
-        xml_request << XmlNode.new('CODIncludingFreightCharge', options[:included_freight_charges])
-        xml_request << XmlNode.new('shipmentDate', options[:date_of_shipment_pickup])
+        xml_request << XmlNode.new('wwex:limitedAccessDeliveryType', LIMITED_ACCESS_TYPE[options['delivery_type']])
+        xml_request << XmlNode.new('wwex:collectOnDelivery', options['COD_service'])
+        xml_request << XmlNode.new('wwex:collectOnDeliveryAmount', options['CPD_service_amount'])
+        xml_request << XmlNode.new('wwex:CODIncludingFreightCharge', options['included_freight_charges'])
+        xml_request << XmlNode.new('wwex:shipmentDate', options['date_of_shipment_pickup'])
         xml_request.to_s
       end
 
       # if InsuranceDetail is used then commdityDetails must be used
       def build_insurance_request(options={}, xml_request)
-        xml_request << XmlNode.new('InsuranceDetail') do |insurance|
-          insurance << XmlNode.new('insuranceCategory', INSURANCE_CATEGORY[options[:insurance_category_type]])
-          insurance << XmlNode.new('insureCommodityValue', options[:insurance_commodity_value])
-          insurance << XmlNode.new('insuranceIncludingFreightCharge', options[:included_the_freight_charges])
+        xml_request << XmlNode.new('wwex:insuranceDetail') do |insurance|
+          insurance << XmlNode.new('wwex:insuranceCategory', INSURANCE_CATEGORY[options['insurance_category_type']])
+          insurance << XmlNode.new('wwex:insuredCommodityValue', options['insurance_commodity_value'])
+          insurance << XmlNode.new('wwex:insuranceIncludingFreightCharge', options['included_the_freight_charges'])
         end
         xml_request.to_s
       end
 
       def build_commodity_request(origin, packages, xml_request)
         imperial = ['US', 'LR', 'MM'].include?(origin.country)
-        xml_request << XmlNode.new('commdityDetails') do |commodity|
+        xml_request << XmlNode.new('wwex:commdityDetails') do |commodity|
           # do przemyślenia (czy sami oblicamy czy jest podane)
-          commodity << XmlNode.new('is11FeetShipment', false)
-          commodity << XmlNode.new('handlingUnitDetails') do |details|
+          commodity << XmlNode.new('wwex:is11FeetShipment', false)
+          commodity << XmlNode.new('wwex:handlingUnitDetails') do |details|
             packages.each do |package|
 
-              details << XmlNode.new('wsHandlingUnit') do |package_handling|
-                package_handling << XmlNode.new('typeOfHandlingUnit', package.options[:units])
-                package_handling << XmlNode.new('numberOfHandlingUnit', package.options[:number]) unless package.options[:number]
-                package_handling << XmlNode.new('numberOfHandlingUnit', "1")
+              details << XmlNode.new('wwex:wsHandlingUnit') do |package_handling|
+                package_handling << XmlNode.new('wwex:typeOfHandlingUnit', package.options['units'])
+                package_handling << XmlNode.new('wwex:numberOfHandlingUnit', package.options['number'])
+
                 if imperial
-                  package_handling << XmlNode.new('handlingUnitHeight', package.inches[2])
-                  package_handling << XmlNode.new('handlingUnitLength', package.inches[0])
-                  package_handling << XmlNode.new('handlingUnitWidth', package.inches[1])
+                  package_handling << XmlNode.new('wwex:handlingUnitHeight', package.inches[2])
+                  package_handling << XmlNode.new('wwex:handlingUnitLength', package.inches[0])
+                  package_handling << XmlNode.new('wwex:handlingUnitWidth', package.inches[1])
                 else
-                  package_handling << XmlNode.new('handlingUnitHeight', package.cm[2])
-                  package_handling << XmlNode.new('handlingUnitLength', package.cm[0])
-                  package_handling << XmlNode.new('handlingUnitWidth', package.cm[1])
+                  package_handling << XmlNode.new('wwex:handlingUnitHeight', package.cm[2])
+                  package_handling << XmlNode.new('wwex:handlingUnitLength', package.cm[0])
+                  package_handling << XmlNode.new('wwex:handlingUnitWidth', package.cm[1])
                 end
-                package_handling << XmlNode.new('lineItemDetails') do |line_item_details|
+                package_handling << XmlNode.new('wwex:lineItemDetails') do |line_item_details|
                   package.options['lines'].each do |k, line|
-                    line_item_details << XmlNode.new('wsLineItem') do |ws_line_item|
-                      ws_line_item << XmlNode.new('lineItemClass', line['class_type'])
-                      ws_line_item << XmlNode.new('lineItemWeight', line['weight'])
-                      ws_line_item << XmlNode.new('lineIemDescription', line['description'])
-                      ws_line_item << XmlNode.new('lineItemNMFC', line['NMFC_number'])
-                      ws_line_item << XmlNode.new('lineItemPieceType', line['piece_type'])
-                      ws_line_item << XmlNode.new('piecesOfLineItem', line['number_pieces'])
-                      ws_line_item << XmlNode.new('isHazmatLineItem', line['hazmat'])
-                      if line[:hazmat]
-                        ws_line_item << XmlNode.new('lineItemHazmatInfo') do |line_item_hazmat|
-                          line_item_hazmat << XmlNode.new('lineItemHazmatUNNumberHeader', line['UN_number'])
-                          line_item_hazmat << XmlNode.new('lineItemHazmatUNNumber', line['UN_number_valid'])
-                          line_item_hazmat << XmlNode.new('lineItemHazmatClass', line['hazmat_class'])
-                          line_item_hazmat << XmlNode.new('lineItemHazmatEmContactPhone', line['hazmat_phone'])
-                          line_item_hazmat << XmlNode.new('lineItemHazmatPackagingGroup', line['hazmat_group'])
-                        end
+                    line_item_details << XmlNode.new('wwex:wsLineItem') do |ws_line_item|
+                      ws_line_item << XmlNode.new('wwex:lineItemClass', line['class_type'])
+                      ws_line_item << XmlNode.new('wwex:lineItemWeight', line['weight'])
+                      ws_line_item << XmlNode.new('wwex:lineItemDescription', line['description'])
+                      ws_line_item << XmlNode.new('wwex:lineItemNMFC', line['NMFC_number'])
+                      ws_line_item << XmlNode.new('wwex:lineItemPieceType', line['piece_type'])
+                      ws_line_item << XmlNode.new('wwex:piecesOfLineItem', line['number_pieces'])
+                      ws_line_item << XmlNode.new('wwex:isHazmatLineItem', line['hazmat'])
+
+                      ws_line_item << XmlNode.new('wwex:lineItemHazmatInfo') do |line_item_hazmat|
+                        line_item_hazmat << XmlNode.new('wwex:lineItemHazmatUNNumberHeader', line['UN_number'])
+                        line_item_hazmat << XmlNode.new('wwex:lineItemHazmatUNNumber', line['UN_number_valid'])
+                        line_item_hazmat << XmlNode.new('wwex:lineItemHazmatClass', line['hazmat_class'])
+                        line_item_hazmat << XmlNode.new('wwex:lineItemHazmatEmContactPhone', line['hazmat_phone'])
+                        line_item_hazmat << XmlNode.new('wwex:lineItemHazmatPackagingGroup', line['hazmat_group'])
                       end
+
                     end
                   end
                 end
@@ -184,51 +365,100 @@ module ActiveMerchant
         xml_request.to_s
       end
 
+      def parse_pro_number_response(response)
+        xml = REXML::Document.new(response)
+        success = response_success?(xml)
+        message = response_message(xml)
+        response = {}
+        if success
+          xml.elements['//freightShipmentProNumberResults'].each do |f|
+            puts f
+            bol_number = f.elements['bolNumber'].text
+            pro_number = f.elements['proNumber'].text
+            response[bol_number]= pro_number
+          end
+          return response
+        else
+          return message
+        end
+
+      end
+
+      def parse_void_response(response)
+        xml = REXML::Document.new(response)
+        success = response_success?(xml)
+        message = response_message(xml)
+        response = {}
+        if success
+          xml.elements['//freightShipmentVoidResults'].each do |void_result|
+            description = void_result.elements['description'].text
+            bol_number = void_result.elements['bolNumber'].text
+            response[bol_number] = description
+          end
+          return response
+        else
+          return message
+        end
+
+      end
+
+      def parse_book_response(response)
+        xml = REXML::Document.new(response)
+        response = {}
+        success = response_success?(xml)
+        message = response_message(xml)
+        if success
+          bol_number = xml.elements['//freightShipmentBOLNumber'].text
+          response[:number] = bol_number
+          image = xml.elements['//base64BOLLabel'].text
+          response[:image] = image
+
+          return response
+        else
+          return message
+        end
+
+      end
+
       def parse_rate_response(origin, destination, packages, response, options={})
         rates = []
         xml = REXML::Document.new(response)
         success = response_success?(xml)
         message = response_message(xml)
-        puts "========"
-        puts message
-        puts "========"
-        xml.elements.each('/*/Response') do |respond|
-          puts "========"
-          puts respond.get_text('ResponseStatusCode').to_s
-          puts "========"
-        end
         if success
-          rate_estimates = []
 
-          xml.elements.each('/*/freightShipmentQuoteResult') do |rated_shipment|
-            service_code = rated_shipment.get_text('shipmentQuoteId').to_s
-            days_to_delivery = rated_shipment.get_text('transitDays')
+          rate_estimates = []
+          xml.elements['//freightShipmentQuoteResults'].each do |rated_shipment|
+            service_code = rated_shipment.elements['shipmentQuoteId'].text
+            days_to_delivery = rated_shipment.elements['transitDays'].text
             rate_estimates << RateEstimate.new(origin, destination, @@name,
-                                               :name => rated_shipment.get_text('carrierName').to_s,
-                                               :total_price => rated_shipment.get_text('totalPrice').to_s.to_f,
+                                               :name => rated_shipment.elements['carrierName'].text,
+                                               :total_price => rated_shipment.elements['totalPrice'].text,
                                                :shipment_quote_id => service_code,
-                                               :carrier_scac => rated_shipment.get_text('carrierSCAC').to_s,
-                                               :delivery_range => [timestamp_from_business_day(days_to_delivery)],
-                                               :guaranteed_service => rated_shipment.get_text('guaranteedService'),
-                                               :high_cost_delivery_shipment => rated_shipment.get_text('highCostDeliveryShipment'),
-                                               :interline => rated_shipment.get_text('interline'),
-                                               :nmfcRequired => rated_shipment.get_text('nmfcRequired')
+                                               :carrier_scac => rated_shipment.elements['carrierSCAC'].text,
+                                               :delivery_range => (days_to_delivery),
+                                               :guaranteed_service => rated_shipment.elements['guaranteedService'].text,
+                                               :high_cost_delivery_shipment => rated_shipment.elements['highCostDeliveryShipment'].text,
+                                               :interline => rated_shipment.elements['interline'].text,
+                                               :nmfcRequired => rated_shipment.elements['nmfcRequired'].text
+
             )
           end
         end
-        RateResponse.new(success, message, Hash.from_xml(response).values.first, :rates => rate_estimates, :xml => response, :request => last_request)
+        response = RateResponse.new(success, message, Hash.from_xml(response).values.first, :rates => rate_estimates, :xml => response, :request => last_request)
+        return response
       end
 
       def response_success?(xml)
-        xml.get_text('/*/Response/ResponseStatusCode').to_s == '1'
+        xml.elements['//responseStatusCode'].text == '1'
       end
 
       def response_message(xml)
-        xml.get_text('/*/Response/Error/ErrorDescription | /*/Response/ResponseStatusDescription').to_s
+        xml.elements['//errorDescription | //ResponseStatusDescription']
       end
 
       def commit(action, request, test = false)
-        ssl_post("#{test ? TEST_URL : LIVE_URL}/#{RESOURCES[action]}", request)
+        ssl_post(LIVE_URL, request.to_s, {"SOAPAction" => "", "Content-Type" => "text/xml"})
       end
     end
   end

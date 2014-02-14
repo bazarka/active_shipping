@@ -15,7 +15,9 @@ module ActiveMerchant #:nodoc:
                   :phone,
                   :fax,
                   :address_type,
-                  :company_name
+                  :company_name,
+                  :email,
+                  :residential_indicator
       
       alias_method :zip, :postal_code
       alias_method :postal, :postal_code
@@ -37,7 +39,9 @@ module ActiveMerchant #:nodoc:
         @address3 = options[:address3]
         @phone = options[:phone]
         @fax = options[:fax]
+        @email = options[:email]
         @company_name = options[:company_name] || options[:company]
+        @residential_indicator = options[:residential_indicator]
 
         self.address_type = options[:address_type]
       end
